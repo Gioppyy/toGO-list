@@ -3,22 +3,31 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"strconv"
 	"strings"
+	"time"
 
-	"github.com/fatih/color"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 type Task struct {
 	Name      string `json:"name"`
 	Completed bool   `json:"completed"`
+	CreatedAt string `json:"created_at"`
 }
 
 const JSON_FILE = "todo.json"
 
-func save(tasks []Task) {
+var (
+	app       = tview.NewApplication()
+	pages     = tview.NewPages()
+	editIndex = 0
+	tasks     []Task
+	menuList  = tview.NewList()
+)
+
+func save() {
 	data, err := json.MarshalIndent(tasks, "", " ")
 	if err != nil {
 		panic(err)
@@ -26,141 +35,157 @@ func save(tasks []Task) {
 	os.WriteFile(JSON_FILE, data, 0644)
 }
 
-func load() []Task {
-	var tasks []Task
-	jsonFile, err := os.Open(JSON_FILE)
-
+func load() {
+	data, err := os.ReadFile(JSON_FILE)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []Task{}
+		if !os.IsNotExist(err) {
+			panic(err)
 		}
-		panic(err)
+		tasks = []Task{}
+		return
 	}
+	json.Unmarshal(data, &tasks)
+}
 
-	defer jsonFile.Close()
+func showList() {
+	flex := tview.NewFlex().SetDirection(tview.FlexRow)
 
-	byteValue, _ := io.ReadAll(jsonFile)
-	json.Unmarshal(byteValue, &tasks)
-	return tasks
+	list := tview.NewList().ShowSecondaryText(false)
+	for i, task := range tasks {
+		status := " "
+		if task.Completed {
+			status = "[green]✓[white]"
+		}
+		list.AddItem(
+			fmt.Sprintf("%d. [%s] %s | %s", i+1, status, task.CreatedAt, task.Name),
+			"", 0, nil,
+		)
+	}
+	list.AddItem(" ", "", 0, nil)
+
+	testPanel := tview.NewTextView().
+		SetTextAlign(tview.AlignCenter).
+		SetText("[ENTER] Mark a task as completed\n[e | E] Edit a task \n[DEL] Delete a task\n [ESC] Back to Main menu")
+
+	testPanel.SetBorder(true).
+		SetTitle(" How to Use ").
+		SetTitleAlign(tview.AlignLeft)
+
+	flex.AddItem(list, 0, 1, true).
+		AddItem(testPanel, 6, 1, false)
+
+	flex.SetBorder(true).
+		SetTitle(" toGO-List | List Task ").
+		SetTitleAlign(tview.AlignCenter)
+
+	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		selected := list.GetCurrentItem()
+		switch event.Key() {
+		case tcell.KeyEnter:
+			if selected >= 0 && selected < len(tasks) {
+				tasks[selected].Completed = !tasks[selected].Completed
+				save()
+				showList()
+			}
+		case tcell.KeyRune:
+			if event.Rune() == 'e' || event.Rune() == 'E' {
+				editIndex = selected
+				editTask()
+				return nil
+			}
+		case tcell.KeyDelete:
+			if selected >= 0 && selected < len(tasks) {
+				tasks = append(tasks[:selected], tasks[selected+1:]...)
+				save()
+				showList()
+			}
+		case tcell.KeyESC:
+			pages.SwitchToPage("menu")
+		}
+		return event
+	})
+
+	pages.AddAndSwitchToPage("List", flex, true)
+}
+
+func addTask() {
+	flex := tview.NewFlex()
+
+	inputField := tview.NewInputField().
+		SetLabel("Name: ").
+		SetFieldWidth(30)
+
+	form := tview.NewForm().
+		AddFormItem(inputField).
+		AddButton("Add", func() {
+			taskName := inputField.GetText()
+
+			if taskName != "" {
+				tasks = append(tasks, Task{Name: taskName, Completed: false, CreatedAt: time.Now().Format(time.DateTime)})
+				save()
+				pages.SwitchToPage("menu")
+			}
+		}).
+		AddButton("Cancel", func() {
+			pages.SwitchToPage("menu")
+		})
+
+	form.SetLabelColor(tcell.ColorWhite)
+
+	flex.AddItem(form, 0, 1, true)
+	flex.SetBorder(true).
+		SetTitle(" toGO-List | Add Task ").
+		SetTitleAlign(tview.AlignCenter)
+
+	pages.AddAndSwitchToPage("Add", flex, true)
+}
+
+func editTask() {
+	flex := tview.NewFlex()
+
+	inputField := tview.NewInputField().
+		SetLabel("Edit:").
+		SetText(tasks[editIndex].Name)
+
+	form := tview.NewForm().
+		AddFormItem(inputField).
+		AddButton("Save", func() {
+			newName := strings.TrimSpace(inputField.GetText())
+			if newName != "" {
+				tasks[editIndex].Name = newName
+				save()
+				showList()
+			}
+		}).
+		AddButton("Cancel", func() {
+			pages.SwitchToPage("List")
+		})
+
+	form.SetLabelColor(tcell.ColorWhite)
+
+	flex.AddItem(form, 0, 1, true)
+	flex.SetBorder(true).
+		SetTitle(" toGO-List | Edit Task ").
+		SetTitleAlign(tview.AlignCenter)
+
+	pages.AddAndSwitchToPage("edit", flex, true)
 }
 
 func menu() {
-	fmt.Println("Use: todo [add | list | done]")
-	fmt.Println("     todo add     <task_name>       		# Add a task")
-	fmt.Println("     todo remove  <task_id>       		# Add a task")
-	fmt.Println("     todo done    <task_id>         		# Mark a task as complete")
-	fmt.Println("     todo list    [--completed | --pending]	# Add a task")
-}
+	menuList.Clear()
+	menuList.AddItem("List", "Show all the task", 'l', func() { showList() })
+	menuList.AddItem("Add", "Add a task", 'a', func() { addTask() })
+	menuList.AddItem("Exit", "Quit", 'q', func() { app.Stop() })
 
-func getFilter(arg string) func(Task) bool {
-	switch arg {
-	case "--completed":
-		return func(t Task) bool { return t.Completed }
-	case "--pending":
-		return func(t Task) bool { return !t.Completed }
-	default:
-		return func(t Task) bool { return true }
-	}
+	menuList.SetBorder(true).SetTitle("   toGO-List | Menu   ").SetTitleAlign(tview.AlignCenter)
+	pages.AddAndSwitchToPage("menu", menuList, true)
 }
 
 func main() {
-	args := os.Args
-	logger := Logger{}
+	load()
+	menu()
 
-	if len(args) < 2 {
-		menu()
-		return
+	if err := app.SetRoot(pages, true).EnableMouse(true).Run(); err != nil {
+		panic(err)
 	}
-
-	cmd := args[1]
-	tasks := load()
-
-	switch cmd {
-
-	case "list":
-		var filter func(Task) bool = func(t Task) bool { return true }
-
-		if len(args) == 3 {
-			filter = getFilter(args[2])
-		}
-
-		for i, task := range tasks {
-			if !filter(task) {
-				continue
-			}
-
-			status := " "
-			if task.Completed {
-				status = color.GreenString("✓")
-			}
-
-			fmt.Printf("%d. [%s] %s\n", i+1, status, task.Name)
-		}
-
-	case "add":
-		if len(args) < 3 {
-			logger.Error("Specify a name for the task")
-			return
-		}
-
-		name := strings.Join(args[2:], " ")
-
-		tasks = append(tasks, Task{Name: name, Completed: false})
-		save(tasks)
-
-		logger.SuccessF("Added task: %s\n", name)
-
-	case "remove":
-		if len(args) < 3 {
-			logger.Error("Error! Specify a Task ID")
-			return
-		}
-
-		id, err := strconv.Atoi(args[2])
-		if err != nil {
-			logger.Error("Error! Not a valid ID")
-			return
-		}
-
-		if id < 1 || id > len(tasks) {
-			logger.Error("Error! Not a valid ID")
-			return
-		}
-
-		tasks = append(tasks[:id-1], tasks[id:]...)
-		save(tasks)
-
-		logger.SuccessF("Removed task n.%d", id)
-
-	case "done":
-		if len(args) != 3 {
-			logger.Error("Error! Specify a Task ID")
-			return
-		}
-
-		id, err := strconv.Atoi(args[2])
-		if err != nil {
-			logger.Error("Error! Not a valid ID")
-			return
-		}
-
-		if id < 1 || id > len(tasks) {
-			logger.Error("Error! Not a valid ID")
-			return
-		}
-
-		if tasks[id-1].Completed {
-			logger.Error("Error! That task is already completed.")
-			return
-		}
-
-		tasks[id-1].Completed = true
-		save(tasks)
-
-		logger.SuccessF("Task n.%d completed!", id)
-
-	default:
-		menu()
-	}
-
 }
