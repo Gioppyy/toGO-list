@@ -1,18 +1,19 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"io"
-	"strings"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
 	"strconv"
+	"strings"
+
 	"github.com/fatih/color"
 )
 
 type Task struct {
-	Name      string  `json:"name"`
-	Completed bool    `json:"completed"`
+	Name      string `json:"name"`
+	Completed bool   `json:"completed"`
 }
 
 const JSON_FILE = "todo.json"
@@ -45,9 +46,10 @@ func load() []Task {
 
 func menu() {
 	fmt.Println("Use: todo [add | list | done]")
-	fmt.Println("     todo add  <task_name>       		# Add a task")
-	fmt.Println("     todo done <task_id>         		# Mark a task as complete")
-	fmt.Println("     todo list [--completed | --pending]	# Add a task")
+	fmt.Println("     todo add     <task_name>       		# Add a task")
+	fmt.Println("     todo remove  <task_id>       		# Add a task")
+	fmt.Println("     todo done    <task_id>         		# Mark a task as complete")
+	fmt.Println("     todo list    [--completed | --pending]	# Add a task")
 }
 
 func getFilter(arg string) func(Task) bool {
@@ -92,7 +94,7 @@ func main() {
 				status = color.GreenString("✓")
 			}
 
-			fmt.Printf("%d. [%s] %s\n", i+1,  status, task.Name)
+			fmt.Printf("%d. [%s] %s\n", i+1, status, task.Name)
 		}
 
 	case "add":
@@ -101,12 +103,34 @@ func main() {
 			return
 		}
 
-		name := strings.Join(args[2:],  " ")
+		name := strings.Join(args[2:], " ")
 
 		tasks = append(tasks, Task{Name: name, Completed: false})
 		save(tasks)
 
 		logger.SuccessF("Added task: %s\n", name)
+
+	case "remove":
+		if len(args) < 3 {
+			logger.Error("Error! Specify a Task ID")
+			return
+		}
+
+		id, err := strconv.Atoi(args[2])
+		if err != nil {
+			logger.Error("Error! Not a valid ID")
+			return
+		}
+
+		if id < 1 || id > len(tasks) {
+			logger.Error("Error! Not a valid ID")
+			return
+		}
+
+		tasks = append(tasks[:id-1], tasks[id:]...)
+		save(tasks)
+
+		logger.SuccessF("Removed task n.%d", id)
 
 	case "done":
 		if len(args) != 3 {

@@ -1,14 +1,10 @@
 [
  {
   "name": "adsda",
+  "completed": true
+ },
+ {
+  "name": "test",
   "completed": false
- },
- {
-  "name": "adsda",
-  "completed": true
- },
- {
-  "name": "adsda",
-  "completed": true
  }
 ]
